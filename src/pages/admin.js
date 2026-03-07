@@ -13,15 +13,24 @@ export default function AdminPanel() {
   const [password, setPassword] = useState('')
   const [tasks, setTasks] = useState([])
   const [users, setUsers] = useState([])
-  const [activeSection, setActiveSection] = useState('tasks')
+  const [section, setSection] = useState('tasks')
   const [loading, setLoading] = useState(false)
-  const [toast, setToast] = useState('')
+  const [toast, setToast] = useState({ msg: '', type: 'success' })
   const [newTask, setNewTask] = useState({ title: '', description: '', task_type: 'telegram', url: '', icon: '', points: 100 })
-  const [stats, setStats] = useState({ totalUsers: 0, walletsSubmitted: 0, tasksCompleted: 0 })
+  const [giftUser, setGiftUser] = useState({ telegram_id: '', points: 0, reason: '' })
+  const [stats, setStats] = useState({ totalUsers: 0, walletsSubmitted: 0, bannedUsers: 0 })
+  const [searchUser, setSearchUser] = useState('')
 
-  useEffect(() => { if (authed) { fetchTasks(); fetchUsers(); fetchStats() } }, [authed])
+  useEffect(() => { if (authed) { fetchAll() } }, [authed])
 
-  const showToast = (msg) => { setToast(msg); setTimeout(() => setToast(''), 3000) }
+  const showToast = (msg, type = 'success') => {
+    setToast({ msg, type })
+    setTimeout(() => setToast({ msg: '', type: 'success' }), 3000)
+  }
+
+  const fetchAll = async () => {
+    await Promise.all([fetchTasks(), fetchUsers(), fetchStats()])
+  }
 
   const fetchTasks = async () => {
     const { data } = await supabase.from('tasks').select('*').order('created_at', { ascending: false })
@@ -34,168 +43,156 @@ export default function AdminPanel() {
   }
 
   const fetchStats = async () => {
-    const { count: totalUsers } = await supabase.from('users').select('*', { count: 'exact', head: true })
-    const { count: walletsSubmitted } = await supabase.from('users').select('*', { count: 'exact', head: true }).not('wallet_address', 'is', null)
-    const { count: tasksCompleted } = await supabase.from('user_tasks').select('*', { count: 'exact', head: true })
-    setStats({ totalUsers: totalUsers || 0, walletsSubmitted: walletsSubmitted || 0, tasksCompleted: tasksCompleted || 0 })
+    const { count: total } = await supabase.from('users').select('*', { count: 'exact', head: true })
+    const { count: wallets } = await supabase.from('users').select('*', { count: 'exact', head: true }).not('wallet_address', 'is', null)
+    const { count: banned } = await supabase.from('users').select('*', { count: 'exact', head: true }).eq('is_banned', true)
+    setStats({ totalUsers: total || 0, walletsSubmitted: wallets || 0, bannedUsers: banned || 0 })
   }
 
   const addTask = async () => {
-    if (!newTask.title || !newTask.points) { showToast('Title and points are required!'); return }
+    if (!newTask.title || !newTask.points) { showToast('Title and points required!', 'error'); return }
     setLoading(true)
-    const { error } = await supabase.from('tasks').insert({ ...newTask, is_active: true })
-    if (!error) { showToast('✅ Task added!'); fetchTasks(); setNewTask({ title: '', description: '', task_type: 'telegram', url: '', icon: '', points: 100 }) }
+    const { error } = await supabase.from('tasks').insert({ ...newTask, points: parseInt(newTask.points), is_active: true })
+    if (error) { showToast('Error: ' + error.message, 'error') }
+    else { showToast('Task added!'); setNewTask({ title: '', description: '', task_type: 'telegram', url: '', icon: '', points: 100 }); fetchTasks() }
     setLoading(false)
   }
 
   const toggleTask = async (task) => {
-    await supabase.from('tasks').update({ is_active: !task.is_active }).eq('id', task.id)
-    fetchTasks()
-    showToast(task.is_active ? '⏸ Task disabled' : '▶️ Task enabled')
+    const { error } = await supabase.from('tasks').update({ is_active: !task.is_active }).eq('id', task.id)
+    if (error) { showToast('Error toggling task', 'error') }
+    else { showToast(task.is_active ? 'Task disabled' : 'Task enabled'); fetchTasks() }
   }
 
   const deleteTask = async (id) => {
-    if (!confirm('Delete this task?')) return
-    await supabase.from('tasks').delete().eq('id', id)
-    fetchTasks()
-    showToast('🗑️ Task deleted')
+    if (!confirm('Delete this task permanently?')) return
+    const { error } = await supabase.from('tasks').delete().eq('id', id)
+    if (error) { showToast('Error deleting task', 'error') }
+    else { showToast('Task deleted'); fetchTasks() }
   }
 
-  const exportSnapshot = () => {
-    const withWallets = users.filter(u => u.wallet_address)
-    const csv = ['Rank,Telegram ID,Username,Name,Wallet Address,Points,Referrals,Tasks Completed,Joined',
-      ...withWallets.map((u, i) => `${i+1},${u.telegram_id},${u.username || ''},${u.first_name || ''},${u.wallet_address},${u.points},${u.referral_count},${u.tasks_completed},${new Date(u.created_at).toLocaleDateString()}`)
+  const banUser = async (u) => {
+    if (!confirm((u.is_banned ? 'Unban ' : 'Ban ') + u.first_name + '?')) return
+    const { error } = await supabase.from('users').update({ is_banned: !u.is_banned }).eq('telegram_id', u.telegram_id)
+    if (error) { showToast('Error: ' + error.message, 'error') }
+    else { showToast(u.is_banned ? u.first_name + ' unbanned' : u.first_name + ' banned'); fetchUsers(); fetchStats() }
+  }
+
+  const giftPoints = async () => {
+    if (!giftUser.telegram_id || !giftUser.points) { showToast('Enter user ID and points!', 'error'); return }
+    setLoading(true)
+    const { error } = await supabase.rpc('add_points', {
+      user_telegram_id: parseInt(giftUser.telegram_id),
+      points_to_add: parseInt(giftUser.points),
+    })
+    if (error) { showToast('Error: ' + error.message, 'error') }
+    else { showToast(giftUser.points + ' pts gifted!'); setGiftUser({ telegram_id: '', points: 0, reason: '' }); fetchUsers() }
+    setLoading(false)
+  }
+
+  const exportCSV = (withWalletsOnly) => {
+    const list = withWalletsOnly ? users.filter(u => u.wallet_address) : users
+    const csv = ['Rank,Telegram ID,Username,Name,Wallet,Points,Referrals,Tasks,Banned,Joined',
+      ...list.map((u, i) => i+1+','+u.telegram_id+','+(u.username||'')+','+(u.first_name||'')+','+(u.wallet_address||'')+','+u.points+','+u.referral_count+','+u.tasks_completed+','+(u.is_banned||false)+','+new Date(u.created_at).toLocaleDateString())
     ].join('\n')
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = url
-    a.download = `pecker-airdrop-snapshot-${new Date().toISOString().slice(0,10)}.csv`
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+    a.download = 'pecker-'+(withWalletsOnly ? 'snapshot' : 'all')+'-'+new Date().toISOString().slice(0,10)+'.csv'
     a.click()
-    showToast('📥 Snapshot exported!')
+    showToast('Exported!')
   }
 
-  const exportAll = () => {
-    const csv = ['Rank,Telegram ID,Username,Name,Wallet Address,Points,Referrals,Tasks Completed,Joined',
-      ...users.map((u, i) => `${i+1},${u.telegram_id},${u.username || ''},${u.first_name || ''},${u.wallet_address || 'NOT SUBMITTED'},${u.points},${u.referral_count},${u.tasks_completed},${new Date(u.created_at).toLocaleDateString()}`)
-    ].join('\n')
-    const blob = new Blob([csv], { type: 'text/csv' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `pecker-all-users-${new Date().toISOString().slice(0,10)}.csv`
-    a.click()
-    showToast('📥 All users exported!')
-  }
+  const filteredUsers = users.filter(u =>
+    searchUser === '' ||
+    (u.first_name || '').toLowerCase().includes(searchUser.toLowerCase()) ||
+    (u.username || '').toLowerCase().includes(searchUser.toLowerCase()) ||
+    String(u.telegram_id).includes(searchUser)
+  )
 
-  // Login screen
   if (!authed) return (
     <div style={{ minHeight: '100vh', background: '#0a0a0f', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-      <div style={{ background: '#13131f', border: '1px solid #1e1e30', borderRadius: '20px', padding: '32px', width: '100%', maxWidth: '400px' }}>
+      <div style={{ background: '#13131f', border: '1px solid #1e1e30', borderRadius: '20px', padding: '32px', width: '100%', maxWidth: '380px' }}>
         <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-          <div style={{ fontSize: '40px', marginBottom: '8px' }}>🔐</div>
-          <h1 style={{ fontFamily: 'Space Mono, monospace', color: '#f5c842', fontSize: '20px' }}>ADMIN PANEL</h1>
-          <p style={{ color: '#6b6b8a', fontSize: '13px', marginTop: '4px' }}>PECKER Airdrop Management</p>
+          <div style={{ fontSize: '40px' }}>🔐</div>
+          <h1 style={{ fontFamily: 'Space Mono, monospace', color: '#f5c842', fontSize: '20px', margin: '8px 0 4px' }}>ADMIN PANEL</h1>
+          <p style={{ color: '#6b6b8a', fontSize: '13px' }}>PECKER Airdrop Management</p>
         </div>
-        <input
-          type="password"
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && (password === ADMIN_PASSWORD ? setAuthed(true) : showToast('Wrong password!'))}
+        <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && (password === ADMIN_PASSWORD ? setAuthed(true) : showToast('Wrong password!', 'error'))}
           placeholder="Enter admin password"
-          style={{ width: '100%', background: '#0a0a0f', border: '1px solid #1e1e30', borderRadius: '10px', padding: '14px', color: '#e8e8f0', fontSize: '14px', outline: 'none', marginBottom: '12px' }}
-        />
-        <button
-          onClick={() => password === ADMIN_PASSWORD ? setAuthed(true) : showToast('❌ Wrong password!')}
-          style={{ width: '100%', background: 'linear-gradient(135deg, #f5c842, #ff6b35)', color: '#0a0a0f', border: 'none', borderRadius: '10px', padding: '14px', fontSize: '15px', fontWeight: 700, cursor: 'pointer', fontFamily: 'Space Mono, monospace' }}
-        >
+          style={{ width: '100%', background: '#0a0a0f', border: '1px solid #1e1e30', borderRadius: '10px', padding: '14px', color: '#e8e8f0', fontSize: '14px', outline: 'none', marginBottom: '12px', boxSizing: 'border-box' }} />
+        <button onClick={() => password === ADMIN_PASSWORD ? setAuthed(true) : showToast('Wrong password!', 'error')}
+          style={{ width: '100%', background: 'linear-gradient(135deg, #f5c842, #ff6b35)', color: '#0a0a0f', border: 'none', borderRadius: '10px', padding: '14px', fontSize: '15px', fontWeight: 700, cursor: 'pointer' }}>
           LOGIN
         </button>
-        {toast && <div style={{ marginTop: '12px', textAlign: 'center', color: '#ff1744', fontSize: '13px' }}>{toast}</div>}
+        {toast.msg && <div style={{ marginTop: '12px', textAlign: 'center', color: '#ff1744', fontSize: '13px' }}>{toast.msg}</div>}
       </div>
     </div>
   )
 
   return (
-    <div style={{ minHeight: '100vh', background: '#0a0a0f', color: '#e8e8f0', fontFamily: 'DM Sans, sans-serif' }}>
-      {toast && (
-        <div style={{ position: 'fixed', top: '20px', right: '20px', background: 'rgba(0,230,118,0.15)', border: '1px solid #00e676', borderRadius: '12px', padding: '12px 20px', color: '#00e676', fontSize: '14px', fontWeight: 600, zIndex: 200 }}>
-          {toast}
+    <div style={{ minHeight: '100vh', background: '#0a0a0f', color: '#e8e8f0', fontFamily: 'sans-serif' }}>
+      {toast.msg && (
+        <div style={{ position: 'fixed', top: '16px', right: '16px', background: toast.type === 'success' ? 'rgba(0,230,118,0.15)' : 'rgba(255,23,68,0.15)', border: '1px solid ' + (toast.type === 'success' ? '#00e676' : '#ff1744'), borderRadius: '12px', padding: '12px 20px', color: toast.type === 'success' ? '#00e676' : '#ff1744', fontSize: '14px', fontWeight: 600, zIndex: 999 }}>
+          {toast.msg}
         </div>
       )}
-
-      {/* Header */}
-      <div style={{ background: '#13131f', borderBottom: '1px solid #1e1e30', padding: '16px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <span style={{ fontSize: '24px' }}>🐦</span>
-          <span style={{ fontFamily: 'Space Mono, monospace', fontSize: '18px', fontWeight: 700, background: 'linear-gradient(135deg, #f5c842, #ff6b35)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>PECKER ADMIN</span>
-        </div>
-        <button onClick={() => setAuthed(false)} style={{ background: 'rgba(255,23,68,0.1)', border: '1px solid rgba(255,23,68,0.3)', borderRadius: '8px', padding: '6px 14px', color: '#ff1744', fontSize: '13px', cursor: 'pointer' }}>Logout</button>
+      <div style={{ background: '#13131f', borderBottom: '1px solid #1e1e30', padding: '14px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontFamily: 'Space Mono, monospace', fontSize: '16px', fontWeight: 700, color: '#f5c842' }}>PECKER ADMIN</span>
+        <button onClick={() => setAuthed(false)} style={{ background: 'rgba(255,23,68,0.1)', border: '1px solid rgba(255,23,68,0.3)', borderRadius: '8px', padding: '6px 14px', color: '#ff1744', fontSize: '12px', cursor: 'pointer' }}>Logout</button>
       </div>
-
-      <div style={{ padding: '24px', maxWidth: '900px', margin: '0 auto' }}>
-        {/* Stats */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px', marginBottom: '24px' }}>
-          {[
-            { label: 'Total Users', value: stats.totalUsers, color: '#f5c842' },
-            { label: 'Wallets Submitted', value: stats.walletsSubmitted, color: '#00e676' },
-            { label: 'Tasks Completed', value: stats.tasksCompleted, color: '#ff6b35' },
-          ].map((s, i) => (
-            <div key={i} style={{ background: '#13131f', border: '1px solid #1e1e30', borderRadius: '14px', padding: '16px', textAlign: 'center' }}>
-              <div style={{ fontSize: '28px', fontWeight: 700, fontFamily: 'Space Mono, monospace', color: s.color }}>{s.value}</div>
-              <div style={{ fontSize: '12px', color: '#6b6b8a', marginTop: '4px' }}>{s.label}</div>
+      <div style={{ padding: '20px', maxWidth: '800px', margin: '0 auto' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginBottom: '20px' }}>
+          {[{ label: 'Total Users', value: stats.totalUsers, color: '#f5c842' }, { label: 'Wallets', value: stats.walletsSubmitted, color: '#00e676' }, { label: 'Banned', value: stats.bannedUsers, color: '#ff1744' }].map((s, i) => (
+            <div key={i} style={{ background: '#13131f', border: '1px solid #1e1e30', borderRadius: '12px', padding: '14px', textAlign: 'center' }}>
+              <div style={{ fontSize: '24px', fontWeight: 700, fontFamily: 'Space Mono, monospace', color: s.color }}>{s.value}</div>
+              <div style={{ fontSize: '11px', color: '#6b6b8a', marginTop: '4px' }}>{s.label}</div>
             </div>
           ))}
         </div>
-
-        {/* Navigation */}
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '24px', flexWrap: 'wrap' }}>
-          {['tasks', 'users', 'snapshot'].map(section => (
-            <button key={section} onClick={() => setActiveSection(section)} style={{ padding: '10px 20px', background: activeSection === section ? 'linear-gradient(135deg, #f5c842, #ff6b35)' : '#13131f', border: activeSection === section ? 'none' : '1px solid #1e1e30', borderRadius: '10px', color: activeSection === section ? '#0a0a0f' : '#e8e8f0', fontSize: '14px', fontWeight: 600, cursor: 'pointer', fontFamily: 'Space Mono, monospace', textTransform: 'uppercase', fontSize: '12px' }}>
-              {section === 'tasks' ? '📋 Tasks' : section === 'users' ? '👥 Users' : '📥 Snapshot'}
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '20px', overflowX: 'auto' }}>
+          {[['tasks','Tasks'], ['users','Users'], ['gift','Gift Points'], ['snapshot','Snapshot']].map(([id, label]) => (
+            <button key={id} onClick={() => setSection(id)} style={{ padding: '9px 16px', background: section === id ? 'linear-gradient(135deg, #f5c842, #ff6b35)' : '#13131f', border: section === id ? 'none' : '1px solid #1e1e30', borderRadius: '10px', color: section === id ? '#0a0a0f' : '#e8e8f0', fontSize: '12px', fontWeight: 600, cursor: 'pointer', whiteSpace: 'nowrap' }}>
+              {label}
             </button>
           ))}
         </div>
 
-        {/* TASKS SECTION */}
-        {activeSection === 'tasks' && (
+        {section === 'tasks' && (
           <div>
-            {/* Add new task */}
-            <div style={{ background: '#13131f', border: '1px solid #1e1e30', borderRadius: '16px', padding: '20px', marginBottom: '24px' }}>
-              <h3 style={{ fontFamily: 'Space Mono, monospace', fontSize: '14px', color: '#f5c842', marginBottom: '16px' }}>➕ ADD NEW TASK</h3>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
-                <input value={newTask.title} onChange={e => setNewTask({...newTask, title: e.target.value})} placeholder="Task title *" style={{ background: '#0a0a0f', border: '1px solid #1e1e30', borderRadius: '8px', padding: '10px 12px', color: '#e8e8f0', fontSize: '13px', outline: 'none' }} />
-                <select value={newTask.task_type} onChange={e => setNewTask({...newTask, task_type: e.target.value})} style={{ background: '#0a0a0f', border: '1px solid #1e1e30', borderRadius: '8px', padding: '10px 12px', color: '#e8e8f0', fontSize: '13px', outline: 'none' }}>
-                  <option value="telegram">📢 Telegram</option>
-                  <option value="twitter">🐦 Twitter/X</option>
-                  <option value="website">🌐 Website</option>
-                  <option value="daily">⚡ Daily</option>
-                  <option value="custom">⭐ Custom</option>
+            <div style={{ background: '#13131f', border: '1px solid #1e1e30', borderRadius: '14px', padding: '18px', marginBottom: '20px' }}>
+              <div style={{ fontFamily: 'Space Mono, monospace', fontSize: '13px', color: '#f5c842', marginBottom: '14px' }}>ADD NEW TASK</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
+                <input value={newTask.title} onChange={e => setNewTask({ ...newTask, title: e.target.value })} placeholder="Task title *" style={{ background: '#0a0a0f', border: '1px solid #1e1e30', borderRadius: '8px', padding: '10px 12px', color: '#e8e8f0', fontSize: '13px', outline: 'none' }} />
+                <input value={newTask.url} onChange={e => setNewTask({ ...newTask, url: e.target.value })} placeholder="URL (optional)" style={{ background: '#0a0a0f', border: '1px solid #1e1e30', borderRadius: '8px', padding: '10px 12px', color: '#e8e8f0', fontSize: '13px', outline: 'none' }} />
+                <input value={newTask.description} onChange={e => setNewTask({ ...newTask, description: e.target.value })} placeholder="Description" style={{ background: '#0a0a0f', border: '1px solid #1e1e30', borderRadius: '8px', padding: '10px 12px', color: '#e8e8f0', fontSize: '13px', outline: 'none' }} />
+                <input value={newTask.icon} onChange={e => setNewTask({ ...newTask, icon: e.target.value })} placeholder="Icon emoji" style={{ background: '#0a0a0f', border: '1px solid #1e1e30', borderRadius: '8px', padding: '10px 12px', color: '#e8e8f0', fontSize: '13px', outline: 'none' }} />
+                <select value={newTask.task_type} onChange={e => setNewTask({ ...newTask, task_type: e.target.value })} style={{ background: '#0a0a0f', border: '1px solid #1e1e30', borderRadius: '8px', padding: '10px 12px', color: '#e8e8f0', fontSize: '13px', outline: 'none' }}>
+                  <option value="telegram">Telegram</option>
+                  <option value="twitter">Twitter/X</option>
+                  <option value="website">Website</option>
+                  <option value="daily">Daily</option>
+                  <option value="custom">Custom</option>
                 </select>
-                <input value={newTask.url} onChange={e => setNewTask({...newTask, url: e.target.value})} placeholder="URL (optional)" style={{ background: '#0a0a0f', border: '1px solid #1e1e30', borderRadius: '8px', padding: '10px 12px', color: '#e8e8f0', fontSize: '13px', outline: 'none' }} />
-                <input value={newTask.points} onChange={e => setNewTask({...newTask, points: parseInt(e.target.value) || 0})} placeholder="Points *" type="number" style={{ background: '#0a0a0f', border: '1px solid #1e1e30', borderRadius: '8px', padding: '10px 12px', color: '#e8e8f0', fontSize: '13px', outline: 'none' }} />
-                <input value={newTask.description} onChange={e => setNewTask({...newTask, description: e.target.value})} placeholder="Description" style={{ background: '#0a0a0f', border: '1px solid #1e1e30', borderRadius: '8px', padding: '10px 12px', color: '#e8e8f0', fontSize: '13px', outline: 'none' }} />
-                <input value={newTask.icon} onChange={e => setNewTask({...newTask, icon: e.target.value})} placeholder="Icon emoji (optional)" style={{ background: '#0a0a0f', border: '1px solid #1e1e30', borderRadius: '8px', padding: '10px 12px', color: '#e8e8f0', fontSize: '13px', outline: 'none' }} />
+                <input type="number" value={newTask.points} onChange={e => setNewTask({ ...newTask, points: e.target.value })} placeholder="Points *" style={{ background: '#0a0a0f', border: '1px solid #1e1e30', borderRadius: '8px', padding: '10px 12px', color: '#e8e8f0', fontSize: '13px', outline: 'none' }} />
               </div>
-              <button onClick={addTask} disabled={loading} style={{ background: 'linear-gradient(135deg, #f5c842, #ff6b35)', color: '#0a0a0f', border: 'none', borderRadius: '10px', padding: '12px 24px', fontSize: '14px', fontWeight: 700, cursor: 'pointer', fontFamily: 'Space Mono, monospace' }}>
-                {loading ? 'Adding...' : '➕ Add Task'}
+              <button onClick={addTask} disabled={loading} style={{ background: 'linear-gradient(135deg, #f5c842, #ff6b35)', color: '#0a0a0f', border: 'none', borderRadius: '10px', padding: '12px 24px', fontSize: '14px', fontWeight: 700, cursor: 'pointer' }}>
+                {loading ? 'Adding...' : 'Add Task'}
               </button>
             </div>
-
-            {/* Task list */}
-            <h3 style={{ fontFamily: 'Space Mono, monospace', fontSize: '13px', color: '#6b6b8a', marginBottom: '12px', letterSpacing: '1px' }}>ALL TASKS ({tasks.length})</h3>
+            <div style={{ fontFamily: 'Space Mono, monospace', fontSize: '12px', color: '#6b6b8a', marginBottom: '10px' }}>ALL TASKS ({tasks.length})</div>
             {tasks.map(task => (
-              <div key={task.id} style={{ background: '#13131f', border: `1px solid ${task.is_active ? '#1e1e30' : 'rgba(255,23,68,0.2)'}`, borderRadius: '12px', padding: '14px 16px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '12px', opacity: task.is_active ? 1 : 0.6 }}>
-                <span style={{ fontSize: '20px' }}>{task.icon || '⭐'}</span>
+              <div key={task.id} style={{ background: '#13131f', border: '1px solid ' + (task.is_active ? '#1e1e30' : 'rgba(255,23,68,0.2)'), borderRadius: '12px', padding: '14px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '12px', opacity: task.is_active ? 1 : 0.6 }}>
+                <span style={{ fontSize: '22px' }}>{task.icon || '⭐'}</span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: '14px', fontWeight: 600, color: '#e8e8f0' }}>{task.title}</div>
-                  <div style={{ fontSize: '11px', color: '#6b6b8a', marginTop: '2px' }}>{task.task_type} • {task.points} pts {task.url && `• ${task.url.slice(0,30)}...`}</div>
+                  <div style={{ fontSize: '11px', color: '#6b6b8a', marginTop: '2px' }}>{task.task_type} • {task.points} pts</div>
                 </div>
-                <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
-                  <button onClick={() => toggleTask(task)} style={{ padding: '6px 12px', background: task.is_active ? 'rgba(255,107,53,0.1)' : 'rgba(0,230,118,0.1)', border: `1px solid ${task.is_active ? 'rgba(255,107,53,0.3)' : 'rgba(0,230,118,0.3)'}`, borderRadius: '8px', color: task.is_active ? '#ff6b35' : '#00e676', fontSize: '12px', cursor: 'pointer' }}>
+                <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                  <button onClick={() => toggleTask(task)} style={{ padding: '6px 12px', background: task.is_active ? 'rgba(255,107,53,0.1)' : 'rgba(0,230,118,0.1)', border: '1px solid ' + (task.is_active ? 'rgba(255,107,53,0.4)' : 'rgba(0,230,118,0.4)'), borderRadius: '8px', color: task.is_active ? '#ff6b35' : '#00e676', fontSize: '12px', cursor: 'pointer', fontWeight: 600 }}>
                     {task.is_active ? 'Disable' : 'Enable'}
                   </button>
-                  <button onClick={() => deleteTask(task.id)} style={{ padding: '6px 12px', background: 'rgba(255,23,68,0.1)', border: '1px solid rgba(255,23,68,0.3)', borderRadius: '8px', color: '#ff1744', fontSize: '12px', cursor: 'pointer' }}>
+                  <button onClick={() => deleteTask(task.id)} style={{ padding: '6px 12px', background: 'rgba(255,23,68,0.1)', border: '1px solid rgba(255,23,68,0.3)', borderRadius: '8px', color: '#ff1744', fontSize: '12px', cursor: 'pointer', fontWeight: 600 }}>
                     Delete
                   </button>
                 </div>
@@ -204,60 +201,59 @@ export default function AdminPanel() {
           </div>
         )}
 
-        {/* USERS SECTION */}
-        {activeSection === 'users' && (
+        {section === 'users' && (
           <div>
-            <h3 style={{ fontFamily: 'Space Mono, monospace', fontSize: '13px', color: '#6b6b8a', marginBottom: '12px', letterSpacing: '1px' }}>ALL USERS ({users.length})</h3>
-            {users.slice(0, 50).map((u, i) => (
-              <div key={u.telegram_id} style={{ background: '#13131f', border: '1px solid #1e1e30', borderRadius: '12px', padding: '12px 16px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-                <div style={{ width: '28px', height: '28px', background: 'linear-gradient(135deg, #f5c842, #ff6b35)', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, color: '#0a0a0f', flexShrink: 0 }}>
-                  {i+1}
-                </div>
+            <input value={searchUser} onChange={e => setSearchUser(e.target.value)} placeholder="Search by name, username or ID..."
+              style={{ width: '100%', background: '#13131f', border: '1px solid #1e1e30', borderRadius: '10px', padding: '12px', color: '#e8e8f0', fontSize: '13px', outline: 'none', marginBottom: '14px', boxSizing: 'border-box' }} />
+            <div style={{ fontFamily: 'Space Mono, monospace', fontSize: '12px', color: '#6b6b8a', marginBottom: '10px' }}>USERS ({filteredUsers.length})</div>
+            {filteredUsers.slice(0, 100).map((u, i) => (
+              <div key={u.telegram_id} style={{ background: '#13131f', border: '1px solid ' + (u.is_banned ? 'rgba(255,23,68,0.3)' : '#1e1e30'), borderRadius: '12px', padding: '12px 14px', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '10px' }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: '14px', fontWeight: 600, color: '#e8e8f0', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {u.first_name} {u.username ? `(@${u.username})` : ''}
-                  </div>
-                  <div style={{ fontSize: '11px', color: '#6b6b8a', marginTop: '2px' }}>
-                    {u.wallet_address ? `💳 ${u.wallet_address.slice(0,10)}...` : '❌ No wallet'} • {u.tasks_completed} tasks • {u.referral_count} refs
-                  </div>
+                  <div style={{ fontSize: '13px', fontWeight: 600, color: u.is_banned ? '#ff1744' : '#e8e8f0' }}>{u.first_name} {u.username ? '(@'+u.username+')' : ''} {u.is_banned ? '— BANNED' : ''}</div>
+                  <div style={{ fontSize: '11px', color: '#6b6b8a' }}>ID: {u.telegram_id} • {u.points} pts • {u.referral_count} refs</div>
                 </div>
-                <div style={{ fontFamily: 'Space Mono, monospace', fontSize: '14px', fontWeight: 700, color: '#f5c842', flexShrink: 0 }}>
-                  {u.points.toLocaleString()}
-                </div>
+                <button onClick={() => banUser(u)} style={{ padding: '6px 12px', background: u.is_banned ? 'rgba(0,230,118,0.1)' : 'rgba(255,23,68,0.1)', border: '1px solid ' + (u.is_banned ? 'rgba(0,230,118,0.3)' : 'rgba(255,23,68,0.3)'), borderRadius: '8px', color: u.is_banned ? '#00e676' : '#ff1744', fontSize: '12px', cursor: 'pointer', fontWeight: 600, flexShrink: 0 }}>
+                  {u.is_banned ? 'Unban' : 'Ban'}
+                </button>
               </div>
             ))}
-            {users.length > 50 && <div style={{ textAlign: 'center', color: '#6b6b8a', fontSize: '13px', padding: '12px' }}>Showing top 50. Export CSV to see all.</div>}
           </div>
         )}
 
-        {/* SNAPSHOT SECTION */}
-        {activeSection === 'snapshot' && (
+        {section === 'gift' && (
           <div>
-            <div style={{ background: '#13131f', border: '1px solid rgba(245,200,66,0.2)', borderRadius: '16px', padding: '24px', marginBottom: '16px' }}>
-              <h3 style={{ fontFamily: 'Space Mono, monospace', fontSize: '14px', color: '#f5c842', marginBottom: '8px' }}>📥 AIRDROP SNAPSHOT</h3>
-              <p style={{ fontSize: '13px', color: '#a0a0b8', lineHeight: '1.6', marginBottom: '16px' }}>
-                Export all users who submitted their BSC wallet address. This is your airdrop distribution list sorted by points.
-              </p>
-              <div style={{ background: '#0a0a0f', borderRadius: '10px', padding: '12px', marginBottom: '16px', fontSize: '13px', color: '#6b6b8a' }}>
-                👛 <span style={{ color: '#00e676', fontWeight: 600 }}>{stats.walletsSubmitted}</span> users with wallets out of <span style={{ color: '#f5c842', fontWeight: 600 }}>{stats.totalUsers}</span> total users
+            <div style={{ background: '#13131f', border: '1px solid rgba(245,200,66,0.2)', borderRadius: '14px', padding: '20px', marginBottom: '16px' }}>
+              <div style={{ fontFamily: 'Space Mono, monospace', fontSize: '13px', color: '#f5c842', marginBottom: '16px' }}>GIFT POINTS TO USER</div>
+              <div style={{ display: 'grid', gap: '10px' }}>
+                <input value={giftUser.telegram_id} onChange={e => setGiftUser({ ...giftUser, telegram_id: e.target.value })} placeholder="Telegram ID" style={{ background: '#0a0a0f', border: '1px solid #1e1e30', borderRadius: '8px', padding: '12px', color: '#e8e8f0', fontSize: '13px', outline: 'none' }} />
+                <input type="number" value={giftUser.points || ''} onChange={e => setGiftUser({ ...giftUser, points: e.target.value })} placeholder="Points to gift" style={{ background: '#0a0a0f', border: '1px solid #1e1e30', borderRadius: '8px', padding: '12px', color: '#e8e8f0', fontSize: '13px', outline: 'none' }} />
+                <button onClick={giftPoints} disabled={loading} style={{ background: 'linear-gradient(135deg, #f5c842, #ff6b35)', color: '#0a0a0f', border: 'none', borderRadius: '10px', padding: '14px', fontSize: '14px', fontWeight: 700, cursor: 'pointer' }}>
+                  {loading ? 'Gifting...' : 'Gift Points'}
+                </button>
               </div>
-              <button onClick={exportSnapshot} style={{ width: '100%', background: 'linear-gradient(135deg, #f5c842, #ff6b35)', color: '#0a0a0f', border: 'none', borderRadius: '10px', padding: '14px', fontSize: '14px', fontWeight: 700, cursor: 'pointer', fontFamily: 'Space Mono, monospace', marginBottom: '10px' }}>
-                📥 Export Wallet Snapshot (CSV)
-              </button>
-              <button onClick={exportAll} style={{ width: '100%', background: 'transparent', border: '1px solid #1e1e30', color: '#a0a0b8', borderRadius: '10px', padding: '12px', fontSize: '13px', cursor: 'pointer' }}>
-                📊 Export All Users (CSV)
-              </button>
             </div>
-
-            <div style={{ background: 'rgba(255,107,53,0.06)', border: '1px solid rgba(255,107,53,0.15)', borderRadius: '12px', padding: '16px' }}>
-              <div style={{ fontSize: '13px', fontWeight: 600, color: '#ff6b35', marginBottom: '8px' }}>📋 How to distribute airdrop</div>
-              <div style={{ fontSize: '12px', color: '#6b6b8a', lineHeight: '1.8' }}>
-                1. Click "Export Wallet Snapshot" above<br/>
-                2. Open the CSV file in Excel or Google Sheets<br/>
-                3. Use the wallet addresses in column E to send tokens<br/>
-                4. Points column shows how much each user should receive<br/>
-                5. Higher points = bigger airdrop share
+            <div style={{ fontFamily: 'Space Mono, monospace', fontSize: '12px', color: '#6b6b8a', marginBottom: '10px' }}>TAP USER TO SELECT</div>
+            {users.slice(0, 20).map(u => (
+              <div key={u.telegram_id} onClick={() => setGiftUser({ ...giftUser, telegram_id: String(u.telegram_id) })}
+                style={{ background: giftUser.telegram_id === String(u.telegram_id) ? 'rgba(245,200,66,0.08)' : '#13131f', border: '1px solid ' + (giftUser.telegram_id === String(u.telegram_id) ? 'rgba(245,200,66,0.3)' : '#1e1e30'), borderRadius: '10px', padding: '10px 14px', marginBottom: '6px', display: 'flex', justifyContent: 'space-between', cursor: 'pointer' }}>
+                <div style={{ fontSize: '13px', color: '#e8e8f0' }}>{u.first_name} {u.username ? '(@'+u.username+')' : ''}</div>
+                <div style={{ fontSize: '12px', color: '#f5c842' }}>{u.points} pts</div>
               </div>
+            ))}
+          </div>
+        )}
+
+        {section === 'snapshot' && (
+          <div>
+            <div style={{ background: '#13131f', border: '1px solid rgba(245,200,66,0.2)', borderRadius: '14px', padding: '24px', marginBottom: '14px' }}>
+              <div style={{ fontFamily: 'Space Mono, monospace', fontSize: '13px', color: '#f5c842', marginBottom: '8px' }}>AIRDROP SNAPSHOT</div>
+              <div style={{ fontSize: '13px', color: '#6b6b8a', marginBottom: '16px' }}>{stats.walletsSubmitted} users with wallets out of {stats.totalUsers} total.</div>
+              <button onClick={() => exportCSV(true)} style={{ width: '100%', background: 'linear-gradient(135deg, #f5c842, #ff6b35)', color: '#0a0a0f', border: 'none', borderRadius: '10px', padding: '14px', fontSize: '14px', fontWeight: 700, cursor: 'pointer', marginBottom: '10px' }}>
+                Export Wallet Snapshot (CSV)
+              </button>
+              <button onClick={() => exportCSV(false)} style={{ width: '100%', background: 'transparent', border: '1px solid #1e1e30', color: '#a0a0b8', borderRadius: '10px', padding: '12px', fontSize: '13px', cursor: 'pointer' }}>
+                Export All Users (CSV)
+              </button>
             </div>
           </div>
         )}
