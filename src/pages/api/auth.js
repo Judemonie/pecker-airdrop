@@ -12,7 +12,6 @@ export default async function handler(req, res) {
 
   if (!telegram_id) return res.status(400).json({ error: 'Missing telegram_id' })
 
-  // Check if user exists
   const { data: existing } = await supabase
     .from('users')
     .select('*')
@@ -20,44 +19,37 @@ export default async function handler(req, res) {
     .single()
 
   if (existing) {
-    // Update last seen
     const { data } = await supabase
       .from('users')
-      .update({ username, first_name, last_name, photo_url, last_seen: new Date().toISOString() })
+      .update({ 
+        username: username || existing.username, 
+        first_name: first_name || existing.first_name, 
+        last_name: last_name || existing.last_name,
+      })
       .eq('telegram_id', telegram_id)
-      .select().single()
-    return res.json({ user: data, is_new: false })
+      .select()
+      .single()
+    return res.json({ user: data || existing, is_new: false })
   }
 
-  // New user
-  const { data, error } = await supabase
+  const referredByInt = referred_by ? parseInt(referred_by) : null
+  const { data: newUser, error } = await supabase
     .from('users')
     .insert({
-      telegram_id,
-      username,
-      first_name,
-      last_name,
-      photo_url,
-      referred_by: referred_by || null,
+      telegram_id: parseInt(telegram_id),
+      username: username || 'user'+telegram_id,
+      first_name: first_name || 'User',
+      last_name: last_name || '',
+      photo_url: photo_url || null,
+      referred_by: referredByInt && referredByInt !== parseInt(telegram_id) ? referredByInt : null,
       points: 0,
       referral_count: 0,
       tasks_completed: 0,
     })
-    .select().single()
+    .select()
+    .single()
 
   if (error) return res.status(500).json({ error: error.message })
 
-  // Give referral bonus
-  if (referred_by) {
-    await supabase.rpc('add_points', {
-      user_telegram_id: referred_by,
-      points_to_add: 500,
-    })
-    await supabase
-      .from('users')
-      .update({ referral_count: supabase.raw('referral_count + 1') })
-      .eq('telegram_id', referred_by)
-  }
-
-  res.json({ user: data, is_new: true })
+  res.json({ user: newUser, is_new: true })
 }
