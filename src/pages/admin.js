@@ -6,9 +6,6 @@ const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
 )
 
-const ADMIN_PASSWORD = 'pecker2024admin'
-
-
 export default function AdminPanel() {
   const [authed, setAuthed] = useState(false)
   const [password, setPassword] = useState('')
@@ -21,8 +18,18 @@ export default function AdminPanel() {
   const [giftUser, setGiftUser] = useState({ telegram_id: '', points: '', action: 'gift' })
   const [stats, setStats] = useState({ totalUsers: 0, walletsSubmitted: 0, bannedUsers: 0 })
   const [searchUser, setSearchUser] = useState('')
+  const [wrongPass, setWrongPass] = useState(false)
 
   useEffect(() => { if (authed) { fetchAll() } }, [authed])
+
+  const checkPassword = () => {
+    if (password === 'pecker2024admin') {
+      setWrongPass(false)
+      setAuthed(true)
+    } else {
+      setWrongPass(true)
+    }
+  }
 
   const showToast = (msg, type = 'success') => {
     setToast({ msg, type })
@@ -125,15 +132,20 @@ export default function AdminPanel() {
           <h1 style={{ color:'#f5c842', fontSize:'20px', margin:'8px 0 4px' }}>ADMIN PANEL</h1>
           <p style={{ color:'#6b6b8a', fontSize:'13px' }}>PECKER Airdrop Management</p>
         </div>
-        <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-          onKeyDown={e => e.key==='Enter' && (password===ADMIN_PASSWORD ? setAuthed(true) : showToast('Wrong password!','error'))}
+        <input
+          type="password"
+          value={password}
+          onChange={e => { setPassword(e.target.value); setWrongPass(false) }}
+          onKeyDown={e => e.key === 'Enter' && checkPassword()}
           placeholder="Enter admin password"
-          style={{ width:'100%', background:'#0a0a0f', border:'1px solid #1e1e30', borderRadius:'10px', padding:'14px', color:'#e8e8f0', fontSize:'14px', outline:'none', marginBottom:'12px', boxSizing:'border-box' }} />
-        <button onClick={() => password===ADMIN_PASSWORD ? setAuthed(true) : showToast('Wrong password!','error')}
+          style={{ width:'100%', background:'#0a0a0f', border:'1px solid '+(wrongPass?'#ff1744':'#1e1e30'), borderRadius:'10px', padding:'14px', color:'#e8e8f0', fontSize:'14px', outline:'none', marginBottom:'12px', boxSizing:'border-box' }}
+        />
+        {wrongPass && <div style={{ color:'#ff1744', fontSize:'13px', marginBottom:'12px', textAlign:'center' }}>Wrong password!</div>}
+        <button
+          onClick={checkPassword}
           style={{ width:'100%', background:'linear-gradient(135deg,#f5c842,#ff6b35)', color:'#0a0a0f', border:'none', borderRadius:'10px', padding:'14px', fontSize:'15px', fontWeight:700, cursor:'pointer' }}>
           LOGIN
         </button>
-        {toast.msg && <div style={{ marginTop:'12px', textAlign:'center', color:'#ff1744', fontSize:'13px' }}>{toast.msg}</div>}
       </div>
     </div>
   )
