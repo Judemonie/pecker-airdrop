@@ -1,3 +1,10 @@
+import { createClient } from '@supabase/supabase-js'
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+)
+
 const BOT_TOKEN = process.env.BOT_TOKEN
 
 export default async function handler(req, res) {
@@ -7,13 +14,24 @@ export default async function handler(req, res) {
   if (!message) return res.status(200).end()
 
   const chatId = message.chat.id
+  const userId = message.from?.id
   const text = message.text || ''
 
   if (text.startsWith('/start')) {
     const startParam = text.split(' ')[1] || ''
-    const appUrl = startParam
-      ? `https://pecker-airdrop.vercel.app/?startapp=${startParam}`
-      : `https://pecker-airdrop.vercel.app/`
+    const referredBy = startParam.startsWith('ref_')
+      ? parseInt(startParam.replace('ref_', ''))
+      : null
+
+    // Save pending referral BEFORE app opens
+    if (referredBy && userId && referredBy !== userId) {
+      await supabase
+        .from('pending_referrals')
+        .upsert({ telegram_id: userId, referred_by: referredBy })
+        .select()
+    }
+
+    const appUrl = `https://pecker-airdrop.vercel.app/`
 
     await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
       method: 'POST',
