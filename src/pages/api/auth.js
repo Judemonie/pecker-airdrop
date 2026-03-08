@@ -20,7 +20,6 @@ export default async function handler(req, res) {
     .single()
 
   if (existing) {
-    // Check pending referral for existing user
     const { data: pending } = await supabase
       .from('pending_referrals')
       .select('referred_by')
@@ -38,7 +37,10 @@ export default async function handler(req, res) {
           .eq('telegram_id', tidInt)
 
         await supabase.from('users')
-          .update({ points: referrer.points + 500, referral_count: referrer.referral_count + 1 })
+          .update({
+            points: referrer.points + 500,
+            referral_count: referrer.referral_count + 1
+          })
           .eq('telegram_id', pending.referred_by)
       }
       await supabase.from('pending_referrals').delete().eq('telegram_id', tidInt)
@@ -57,8 +59,9 @@ export default async function handler(req, res) {
     return res.json({ user: data || existing, is_new: false })
   }
 
-  // New user — check pending referral first
+  // Brand new user
   let finalReferredBy = null
+
   const { data: pending } = await supabase
     .from('pending_referrals')
     .select('referred_by')
@@ -81,7 +84,7 @@ export default async function handler(req, res) {
       last_name: last_name || '',
       photo_url: photo_url || null,
       referred_by: finalReferredBy,
-      points: 0,
+      points: 500,
       referral_count: 0,
       tasks_completed: 0,
     })
@@ -97,11 +100,10 @@ export default async function handler(req, res) {
 
     if (referrer) {
       await supabase.from('users')
-        .update({ points: 500 })
-        .eq('telegram_id', tidInt)
-
-      await supabase.from('users')
-        .update({ points: referrer.points + 500, referral_count: referrer.referral_count + 1 })
+        .update({
+          points: referrer.points + 500,
+          referral_count: referrer.referral_count + 1
+        })
         .eq('telegram_id', finalReferredBy)
     }
   }
