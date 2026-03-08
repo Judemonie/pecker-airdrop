@@ -23,12 +23,38 @@ export default async function handler(req, res) {
       ? parseInt(startParam.replace('ref_', ''))
       : null
 
-    // Save pending referral BEFORE app opens
     if (referredBy && userId && referredBy !== userId) {
-      await supabase
-        .from('pending_referrals')
-        .upsert({ telegram_id: userId, referred_by: referredBy })
-        .select()
+      // Check if user already exists with no referral
+      const { data: existingUser } = await supabase
+        .from('users')
+        .select('referred_by')
+        .eq('telegram_id', userId)
+        .single()
+
+      if (existingUser && !existingUser.referred_by) {
+        // User exists but has no referral — credit them now
+        const { data: referrer } = await supabase
+          .from('users').select('*')
+          .eq('telegram_id', referredBy).single()
+
+        if (referrer) {
+          await supabase.from('users')
+            .update({ referred_by: referredBy, points: supabase.rpc('increment', { row_id: userId, amount: 500 }) })
+            .eq('telegram_id', userId)
+
+          await supabase.from('users')
+            .update({
+              points: referrer.points + 500,
+              referral_count: referrer.referral_count + 1
+            })
+            .eq('telegram_id', referredBy)
+        }
+      } else {
+        // Save pending referral for new users
+        await supabase
+          .from('pending_referrals')
+          .upsert({ telegram_id: userId, referred_by: referredBy })
+      }
     }
 
     const appUrl = `https://pecker-airdrop.vercel.app/`
@@ -43,10 +69,7 @@ export default async function handler(req, res) {
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[
-            {
-              text: '🐦 Open PECKER Airdrop',
-              web_app: { url: appUrl }
-            }
+            { text: '🐦 Open PECKER Airdrop', web_app: { url: appUrl } }
           ]]
         }
       })
