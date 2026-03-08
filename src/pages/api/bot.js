@@ -15,12 +15,13 @@ export default async function handler(req, res) {
       ? `https://pecker-airdrop.vercel.app/?startapp=${startParam}`
       : `https://pecker-airdrop.vercel.app/`
 
-    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendPhoto`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: chatId,
-        text: `🐦 *Welcome to PECKER Airdrop!*\n\nEarn $PECKER tokens by:\n✅ Completing tasks\n👥 Inviting friends\n🏆 Climbing the leaderboard\n\n🚀 Tap the button below to start earning!`,
+        photo: 'https://pecker-airdrop.vercel.app/IMG_6576.jpeg',
+        caption: `🐦 *Welcome to PECKER Airdrop!*\n\nEarn $PECKER tokens by:\n✅ Completing tasks\n👥 Inviting friends\n🏆 Climbing the leaderboard\n\n🚀 Tap the button below to start earning!`,
         parse_mode: 'Markdown',
         reply_markup: {
           inline_keyboard: [[
