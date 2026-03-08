@@ -17,32 +17,16 @@ export default function Home() {
 
   useEffect(() => { initUser() }, [])
 
-  const getReferralFromUrl = () => {
+  const getReferralId = () => {
     try {
-      // Method 1: from Telegram WebApp initData
       const tg = window.Telegram?.WebApp
       const startParam = tg?.initDataUnsafe?.start_param || ''
       if (startParam.startsWith('ref_')) {
         return parseInt(startParam.replace('ref_', ''))
       }
-
-      // Method 2: from URL hash (Telegram passes it as #tgWebAppStartParam=ref_xxx)
-      const hash = window.location.hash || ''
-      const hashMatch = hash.match(/tgWebAppStartParam=ref_(\d+)/)
-      if (hashMatch) return parseInt(hashMatch[1])
-
-      // Method 3: from URL search params
-      const params = new URLSearchParams(window.location.search)
-      const startParam2 = params.get('startapp') || params.get('start') || ''
-      if (startParam2.startsWith('ref_')) {
-        return parseInt(startParam2.replace('ref_', ''))
-      }
-
-      // Method 4: from full URL string
       const fullUrl = window.location.href
-      const urlMatch = fullUrl.match(/ref_(\d+)/)
-      if (urlMatch) return parseInt(urlMatch[1])
-
+      const match = fullUrl.match(/ref_(\d+)/)
+      if (match) return parseInt(match[1])
       return null
     } catch (e) {
       return null
@@ -61,7 +45,7 @@ export default function Home() {
       }
       setUser(mockUser)
 
-      const referredBy = getReferralFromUrl()
+      const referredBy = getReferralId()
 
       const res = await fetch('/api/auth', {
         method: 'POST',
