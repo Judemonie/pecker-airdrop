@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { hapticFeedback } from '../lib/telegram'
-import { Copy, Users, Gift, ChevronRight } from 'lucide-react'
+import { Copy, Users } from 'lucide-react'
 
 export default function ReferralTab({ user, dbUser, refreshUser }) {
   const [referrals, setReferrals] = useState([])
@@ -9,7 +9,7 @@ export default function ReferralTab({ user, dbUser, refreshUser }) {
   const [copied, setCopied] = useState(false)
 
   const botUsername = process.env.NEXT_PUBLIC_BOT_USERNAME || 'PECKER_BSC_BOT'
-  const refLink = `https://t.me/${botUsername}?start=ref_${user?.id}`
+  const refLink = `https://t.me/${botUsername}/app?startapp=ref_${user?.id}`
   const refPoints = 500
 
   useEffect(() => {
@@ -50,7 +50,6 @@ export default function ReferralTab({ user, dbUser, refreshUser }) {
 
   return (
     <div style={{ padding: '20px 16px' }}>
-      {/* Header */}
       <div style={{ textAlign: 'center', marginBottom: '24px' }}>
         <div style={{ fontSize: '40px', marginBottom: '8px' }}>👥</div>
         <h2 style={{
@@ -64,7 +63,6 @@ export default function ReferralTab({ user, dbUser, refreshUser }) {
         </p>
       </div>
 
-      {/* Stats */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '20px' }}>
         <div className="pecker-card" style={{ padding: '16px', textAlign: 'center' }}>
           <div style={{ fontSize: '28px', fontWeight: 700, fontFamily: 'Space Mono, monospace', color: '#f5c842' }}>
@@ -80,7 +78,6 @@ export default function ReferralTab({ user, dbUser, refreshUser }) {
         </div>
       </div>
 
-      {/* Referral link */}
       <div className="pecker-card" style={{ padding: '16px', marginBottom: '16px' }}>
         <div style={{ fontSize: '12px', color: '#6b6b8a', marginBottom: '10px', letterSpacing: '1px', fontFamily: 'Space Mono, monospace' }}>
           YOUR INVITE LINK
@@ -125,7 +122,6 @@ export default function ReferralTab({ user, dbUser, refreshUser }) {
         </div>
       </div>
 
-      {/* How it works */}
       <div className="pecker-card" style={{ padding: '16px', marginBottom: '20px' }}>
         <div style={{ fontSize: '12px', color: '#6b6b8a', marginBottom: '12px', letterSpacing: '1px', fontFamily: 'Space Mono, monospace' }}>
           HOW IT WORKS
@@ -133,7 +129,7 @@ export default function ReferralTab({ user, dbUser, refreshUser }) {
         {[
           { icon: '🔗', text: 'Share your unique invite link' },
           { icon: '👤', text: 'Friend joins PECKER Mini App' },
-          { icon: '🎁', text: `You earn ${refPoints} bonus points instantly` },
+          { icon: '🎁', text: `You both earn ${refPoints} bonus points instantly` },
           { icon: '♾️', text: 'No limit — invite as many as you want!' },
         ].map((step, i) => (
           <div key={i} style={{
@@ -147,7 +143,6 @@ export default function ReferralTab({ user, dbUser, refreshUser }) {
         ))}
       </div>
 
-      {/* Referral list */}
       <div>
         <div style={{
           fontFamily: 'Space Mono, monospace', fontSize: '12px',
@@ -174,7 +169,7 @@ export default function ReferralTab({ user, dbUser, refreshUser }) {
           </div>
         )}
 
-        {!loading && referrals.map((ref, i) => (
+        {!loading && referrals.map((ref) => (
           <div key={ref.telegram_id} style={{
             display: 'flex', alignItems: 'center', gap: '12px',
             padding: '12px', background: '#13131f',
