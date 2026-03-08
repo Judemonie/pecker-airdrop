@@ -13,6 +13,7 @@ export default async function handler(req, res) {
   if (!telegram_id) return res.status(400).json({ error: 'Missing telegram_id' })
 
   const tidInt = parseInt(telegram_id)
+  const referredByInt = referred_by && parseInt(referred_by) !== tidInt ? parseInt(referred_by) : null
 
   // Check if user already exists
   const { data: existing } = await supabase
@@ -22,7 +23,6 @@ export default async function handler(req, res) {
     .single()
 
   if (existing) {
-    // Just update profile, do NOT touch points or referral
     const { data } = await supabase
       .from('users')
       .update({
@@ -36,12 +36,7 @@ export default async function handler(req, res) {
     return res.json({ user: data || existing, is_new: false })
   }
 
-  // New user — parse referrer
-  const referredByInt = referred_by && parseInt(referred_by) !== tidInt
-    ? parseInt(referred_by)
-    : null
-
-  // Insert new user (trigger will fire automatically for referral bonus)
+  // Insert new user
   const { data: newUser, error } = await supabase
     .from('users')
     .insert({
@@ -60,13 +55,39 @@ export default async function handler(req, res) {
 
   if (error) return res.status(500).json({ error: error.message })
 
-  // Wait briefly for trigger to run, then fetch updated user with bonus points
-  await new Promise(r => setTimeout(r, 500))
-  const { data: updatedUser } = await supabase
+  // Manually handle referral bonus (don't rely on trigger alone)
+  if (referredByInt) {
+    // Check referrer exists
+    const { data: referrer } = await supabase
+      .from('users')
+      .select('*')
+      .eq('telegram_id', referredByInt)
+      .single()
+
+    if (referrer) {
+      // Give new user 500 bonus points
+      await supabase
+        .from('users')
+        .update({ points: newUser.points + 500 })
+        .eq('telegram_id', tidInt)
+
+      // Give referrer 500 points + increment count
+      await supabase
+        .from('users')
+        .update({
+          points: referrer.points + 500,
+          referral_count: referrer.referral_count + 1
+        })
+        .eq('telegram_id', referredByInt)
+    }
+  }
+
+  // Fetch final updated user
+  const { data: finalUser } = await supabase
     .from('users')
     .select('*')
     .eq('telegram_id', tidInt)
     .single()
 
-  res.json({ user: updatedUser || newUser, is_new: true })
+  res.json({ user: finalUser || newUser, is_new: true })
 }
